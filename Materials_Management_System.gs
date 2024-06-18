@@ -3,6 +3,8 @@ const ss = SpreadsheetApp.getActiveSpreadsheet();
 const search_sheet = ss.getSheetByName("Search");
 const search_query_sheet = ss.getSheetByName("Search_Query");
 const inventory_sheet = ss.getSheetByName("Inventory");
+const permissions_sheet = ss.getSheetByName("Permissions");
+const detech_code_sheet = ss.getSheetByName("Detech_Code");
 
 
 function onEdit(e) {
@@ -92,11 +94,6 @@ function updateInventoryCell(row, col, indexCol, activeCell) {
 }
 
 
-function intToLetter(num) {
-    return String.fromCharCode(num+64);
-}
-
-
 
 
 
@@ -116,17 +113,29 @@ function doGet() {
 function getCachedInventoryData() {
   let totalInventoryItems = search_query_sheet.getRange("B11").getValue();
   let data = inventory_sheet.getRange("A2:I" + (totalInventoryItems+1)).getValues();
-  //let data = inventory_sheet.getDataRange().getValues(); // This is insanely slow
   return data;
 }
 
+function getActiveUser() {
+  return Session.getActiveUser().getEmail();
+}
 
+function getPermissionsList() {
+  let rowAndColRange = detech_code_sheet.getRange("A2:B2").getValues();
+  let row = rowAndColRange[0][0]+3;
+  let col = intToLetter(rowAndColRange[0][1]);
+  let data = permissions_sheet.getRange("A4:"+col+""+row).getValues();
+  return data;
+}
 /*
 
 ===========================================================================================================================================================================
 
 */
 
+function intToLetter(num) {
+    return String.fromCharCode(num+64);
+}
 
 function alert(msg) {
   SpreadsheetApp.getUi().alert(msg);

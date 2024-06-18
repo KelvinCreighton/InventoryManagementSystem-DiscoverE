@@ -103,15 +103,14 @@
         if (name.includes(searchQuery) || searchTerms.includes(searchQuery)) {
           // Set the results for which columns they are allowed to see
           let resultsRow = [];
-          for (let j = 0; j < permissionsList.length; j++) {
-            if (permissionsList[j] === "Visible" || permissionsList[j] === "Edit") {
+          for (let j = 0; j < permissionsList.length; j++)
+            if (permissionsList[j] === "Visible" || permissionsList[j] === "Edit")
               resultsRow.push(row[j]);
-            }
-          }
           results.push(resultsRow);
         }
       }
-      console.log(results);
+      console.log(results[0].length);
+      console.log(permissionsList.length);
       displayResults(results);
     }
 
@@ -122,9 +121,11 @@
         resultsDiv.innerHTML = "No items found.";
         return;
       }
+      // Setup the table
       let html = '<table style="border-collapse: collapse; width: 100%;"><tr style="background-color: black; color: white;">';
+      // Get the visible columns
       let viewValues = ["Index", "Name", "Date", "Search Terms", "Location", "Shelf", "Bin", "Amount", "Unit"];
-      for (let i = 0; i < results.length; i++)
+      for (let i = 0; i < permissionsList.length; i++)
         if (permissionsList[i] === "Visible" || permissionsList[i] === "Edit")
           html += "<th>" + viewValues[i] + "</th>";
       html += "</tr>";
@@ -137,13 +138,36 @@
           html += '<tr style="background-color: #e0e0e0; color: black;">';
         }
 
-        for (let x = 0; x < results[y].length; x++) {
-          html += '<td>' + results[y][x] + '</td>';
+        // Set each cell depending on its permission level
+        let x = 0;
+        for (let i = 0; i < permissionsList.length; i++) {
+          if (permissionsList[i] === "Visible") {
+            html += '<td>' + results[y][x] + '</td>';
+            x++;
+          } else if (permissionsList[i] === "Edit") {
+            html += '<td contenteditable="true">' + results[y][x] + '</td>';
+            x++;
+          }
         }
-        html += '</tr>';
+          html += '</tr>';
       }
       html += '</table>';
       resultsDiv.innerHTML = html;
+      //bindEditableCells();
+    }
+
+    // Cell editing
+    function bindEditableCells() {
+        document.querySelectorAll('td[contenteditable="true"]').forEach(cell => {
+            cell.removeEventListener('blur', handleCellEdit);
+            cell.addEventListener('blur', handleCellEdit);
+        });
+    }
+
+    function handleCellEdit(cell) {
+        console.log('Edited cell:', cell);
+        console.log('New value:', cell.textContent);
+        // Add your function logic here
     }
   </script>
 </body>

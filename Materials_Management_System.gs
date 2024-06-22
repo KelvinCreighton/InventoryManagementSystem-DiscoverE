@@ -101,36 +101,46 @@ function updateInventoryCell(row, col, indexCol, activeCell) {
 
 /*
 
-===========================================================================================================================================================================
-
+=====================================================================================================================================================
+        Webpage Code
+=====================================================================================================================================================
 */
 
-
+// Setup the webpage
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Search_Feature_Form');
 }
 
-function getCachedInventoryData() {
-  let totalInventoryItems = search_query_sheet.getRange("B11").getValue();
-  let data = inventory_sheet.getRange("A2:I" + (totalInventoryItems+1)).getValues();
+// Get the entire inventory as a 2d array from the "Inventory" sheet
+function getCachedInventoryDataGSFunction() {
+  let totalInventoryItems = detech_code_sheet.getRange("A6").getValue();
+  let colRange = intToLetter(detech_code_sheet.getRange("B6").getValue());
+  let inventoryRange = "A2:"+colRange+""+(totalInventoryItems+1);
+  let data = inventory_sheet.getRange(inventoryRange).getValues();
   return data;
 }
 
-function getActiveUser() {
+// Get the current users email to track which permissions correspond to them
+function getActiveUserGSFunction() {
   return Session.getActiveUser().getEmail();
 }
 
-function getPermissionsList() {
+// Get the permissions list as a 2d array from the "Permissions" sheets
+function getPermissionsListGSFunction(rowStart, colStart) {
   let rowAndColRange = detech_code_sheet.getRange("A2:B2").getValues();
-  let row = rowAndColRange[0][0]+3;
-  let col = intToLetter(rowAndColRange[0][1]);
-  let data = permissions_sheet.getRange("A4:"+col+""+row).getValues();
+  let rowRangeStart = rowStart;
+  let colRangeStart = intToLetter(colStart);
+  let rowRangeEnd = (rowAndColRange[0][0]+rowStart-1);
+  let colRangeEnd = intToLetter(rowAndColRange[0][1]+colStart-1);
+  let permissionsRange = colRangeStart+""+rowRangeStart+":"+colRangeEnd+""+rowRangeEnd;
+  let data = permissions_sheet.getRange(permissionsRange).getValues();
   return data;
 }
 /*
 
-===========================================================================================================================================================================
-
+=====================================================================================================================================================
+      Simplifier Code
+=====================================================================================================================================================
 */
 
 function intToLetter(num) {

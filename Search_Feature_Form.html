@@ -33,8 +33,10 @@ var cachedInventoryData = null;
 var activeUser = null;
 var permissionsList = [];
 
-
+// These arrays keep track of the cells position and information corresponding to the inventory sheet
 var inventoryColTitles = [];
+var resultCellRows = [];
+var resultCellCols = [];
 
 var waitForDataIntervalID;  // ID for the inverval that runs the "waitForData" function
 
@@ -131,6 +133,7 @@ function searchInventory() {
 
   // Query the inventory data from cache and store the resulting 2d array
   let results = [];
+  resultCellRows = [];
   for (let i = 0; i < cachedInventoryData.length; i++) {
     let row = cachedInventoryData[i];
     let name = row[1].toLowerCase();
@@ -138,6 +141,7 @@ function searchInventory() {
     // Add the row if the search query matches any sub strings in the name or the search terms
     if (name.includes(searchQuery) || searchTerms.includes(searchQuery)) {
       results.push(row);
+      resultCellRows.push(i+1); // Store the row index of the cells displayed in the result 
     }
   }
   displayResults(results);
@@ -174,11 +178,13 @@ function displayResults(results) {
           html += '<td>' + results[y][x] + '</td>';
         else
           html += '<td style="background-color: #e0e0e0;">' + results[y][x] + '</td>';
+        resultCellCols.push(x+1); // Store the column index of the cells that are visible
       } else if (permissionsList[i] === "Edit") {
         if (y % 2 == 0)
           html += '<td contenteditable="true" style="background-color: #e8e8ff;">' + results[y][x] + '</td>';
         else
           html += '<td contenteditable="true" style="background-color: #d0d0ff;">' + results[y][x] + '</td>';
+        resultCellCols.push(x+1); // Store the column index of the cells that are editable
       }
     }
     html += '</tr>';
@@ -192,15 +198,15 @@ function bindEditableCells() {
     document.querySelectorAll('td[contenteditable="true"]').forEach(cell => {
         // Remove existing listeners to avoid duplicates
         cell.removeEventListener("blur", handleCellEdit);
-        cell.removeEventListener("keydown", handleKeyDown);
+        cell.removeEventListener("keydown", cellEditKeyDownHandle);
         // Add "blur" event listener to handle "out of focus"
         cell.addEventListener("blur", handleCellEdit);
         // Add "keydown" event listener to handle Enter key
-        cell.addEventListener("keydown", handleKeyDown);
+        cell.addEventListener("keydown", cellEditKeyDownHandle);
     });
 }
 
-function handleKeyDown(event) {
+function cellEditKeyDownHandle(event) {
     if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault(); // Prevent inserting a newline in the cell
         event.target.blur();    // Move focus away from the cell to trigger blur event
@@ -208,12 +214,23 @@ function handleKeyDown(event) {
 }
 
 function handleCellEdit(event) {
-    const cell = event.target;
-    const row = cell.parentElement;
-    const rowIndex = Array.from(row.parentElement.children).indexOf(row);
-    const columnIndex = Array.from(row.children).indexOf(cell);
-    const newValue = cell.innerText;
-    
+  // Get the cells properties
+  const cell = event.target;
+  const row = cell.parentElement;
+  let rowIndex = Array.from(row.parentElement.children).indexOf(row);
+  let colIndex = Array.from(row.children).indexOf(cell);
+  const cellValue = cell.innerText;
+
+  // Translate the positions to correspond to the inventory sheet rows and columns
+  rowIndex = resultCellRows[rowIndex-1];    // -1 because the first row is just the titles
+  colIndex = resultCellCols[colIndex];
+
+  // Update the cache data to match the new cell value
+  // Note: There is no need to rerun the cacheInventoryListFunction, instead just update that cell witin the cached data itself
+  cachedInventoryData[rowIndex-1][colIndex-1] = cellValue;
+
+  // Update the new value to the inventory sheet
+  google.script.run.updateInventoryFromWebpage(rowIndex, colIndex, cellValue);
 }
 
 </script>

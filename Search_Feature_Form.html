@@ -15,20 +15,16 @@
   <input type="button" value="Search" onclick="searchInventory()">
 </form>
 <br>
-<!-- Set up the container for the table -->
+<!-- Set up the container for the table which holds the search results -->
 <div id="results"></div>
 
 
 <script>
+// Global dev variables
+const permissionsStartRow = 8;  // Update this if you change the starting row of the permissions table in the permissions sheet
+const permissionsTypes = ["None", "Add", "Add & Delete", "Hidden", "Visible", "Edit"];     
 
-// These variables dtermine where the table viewing permissions start and end
-// Change these values if you want to move the permissions table around in the sheets
-// If you do this you will also need to update the formula in cell A1 in the "Inventory" sheet
-const permissionsTableRowStart = 3;
-const permissionsTableColStart = 1;
-const permissionsTableInventoryTitlesColStart = 3;  // Determines which part of the permission are for the inventory titles after the user searches meaning this ignores the "User" and "Add/Delete Items" sections
-
-// These variables are information collected from functions in the .gs file
+// These variables store information collected from functions in the .gs file
 var cachedInventoryData = null;
 var activeUser = null;
 var permissionsList = [];
@@ -54,7 +50,7 @@ function initialize() {
   // Get the active user and store its value in the global "activeUser" variable
   google.script.run.withSuccessHandler(user => {activeUser = user}).getActiveUserGSFunction();
   // Get the permissions list from the sheet and store it in the the global "permissionsList" array
-  google.script.run.withSuccessHandler(list => {permissionsList = list}).getPermissionsListGSFunction(permissionsTableRowStart, permissionsTableColStart);
+  google.script.run.withSuccessHandler(list => {permissionsList = list}).getPermissionsListGSFunction(permissionsStartRow);
   // Get the entire inventory from the sheet and store it in the "cachedInventoryData" 2d array as cached data
   cacheInventoryListFunction();
   // Then set an interval to continually update this cached inventory data after some time has passed
@@ -70,7 +66,7 @@ function initialize() {
   document.getElementById("results").innerHTML = "<b>Loading Inventory Dataset...</b>";
 }
 
-// Load the inventory from google sheets into cach
+// Load the inventory from google sheets into cache
 function cacheInventoryListFunction() {
   google.script.run.withSuccessHandler(data => {cachedInventoryData = data}).getCachedInventoryDataGSFunction();
 }
@@ -78,32 +74,48 @@ function cacheInventoryListFunction() {
 // Wait for all the data to be received from the gs functions before allowing the user to use the search feature
 // So far this takes around 3 seconds on average
 function waitForData() {
-  // Check if all the permissions in the array were set
-  let permissionsSet = true;
-  if (permissionsList.length < permissionsTableInventoryTitlesColStart) { // Check if there are permissions for the inventory columns. There must be at least one column
-    permissionsSet = false;
-  } else {
-    for (let i = 0; i < permissionsList.length; i++) {
-      if (!permissionsList[i]) {
-        permissionsSet = false;
-        break;
-      }
+  if (cachedInventoryData === null || activeUser === null || permissionsList.length == 0) return;
+  if (!checkPermissions()) {
+    alert("There is an error with the Permissions sheet");
+    clearInterval(waitForDataIntervalID); // Stop the active check
+    document.getElementById("results").innerHTML = "Could not load data";
+    return;
+  }
+
+  // If everything is cleared then allow the user to start searching the inventory
+  clearInterval(waitForDataIntervalID); // Stop the active check
+  document.getElementById("queryForm").style.visibility = "visible";
+  document.getElementById("results").innerHTML = "";
+  getInventoryColTitles();
+  setUsersPermissions();
+}
+
+// Check if the permissions are set correctly and have no discrepancies
+function checkPermissions() {
+  // Check if there is at least one user
+  if (permissionsList.length < 2) return false;
+  // If there is only one user check to make sure it is the "other" user
+  let firstUser = permissionsList[1][0].toLowerCase();
+  if (permissionsList.length == 2 && firstUser !== "other" && firstUser !== "other user" && firstUser !== "other users") return false;
+  // Check if all the permissions were set correctly for each user
+  for (let y = 1; y < permissionsList.length; y++) {
+    for (let x = 1; x < permissionsList[y].length; x++) {
+      // Search the current permissions cell value in the permissionsTypes array
+      let i;
+      for (i = 0; i < permissionsTypes.length; i++)
+        if (permissionsList[y][x] === permissionsTypes[i])
+          break;
+      // If i is the length of the array then the value was not found
+      if (i == permissionsTypes.length)
+        return false;
     }
   }
-  
-  // Once all the data is set allow the users to access the search feature
-  if (cachedInventoryData && activeUser && permissionsSet) {
-    clearInterval(waitForDataIntervalID); // Stop the active check
-    document.getElementById("queryForm").style.visibility = "visible";
-    document.getElementById("results").innerHTML = "";
-    getInventoryColTitles();
-    setUsersPermissions();
-  }
+  return true;
 }
 
 // Set the column titles as an array by getting the first index of the permissionsList 2d array
 function getInventoryColTitles() {
-  for (let i = permissionsTableInventoryTitlesColStart-1; i < permissionsList[0].length; i++)
+  for (let i = 2; i < permissionsList[0].length; i++)
     inventoryColTitles.push(permissionsList[0][i]);
 }
 
@@ -157,22 +169,25 @@ function displayResults(results) {
 
   // Setup the table
   let html = '<table style="border-collapse: collapse; width: 100%;"><tr style="background-color: black; color: white;">';
-  // Get the visible columns
+
+  // Set the title row
   for (let i = 0; i < inventoryColTitles.length; i++) {
-    let j = i+permissionsTableInventoryTitlesColStart-1;  // Corresponding index for the permissionsList to the inventoryColTitles arrays
+    let j = i+2;  // Corresponding index for the permissionsList to the inventoryColTitles arrays
     if (permissionsList[j] === "Visible" || permissionsList[j] === "Edit") {
-      html += "<th>" + inventoryColTitles[i] + "</th>";
+      html += '<th>' + inventoryColTitles[i] + '</th>';
     }
   }
-  html += "</tr>";
+
+  html += '</tr>';
   
+  // Set each cell
   for (let y = 0; y < results.length; y++) {
-    html += '<tr>'
+    html += '<tr>';
 
     // Set each cell depending on its permission level
     // And also add an alternating colour style to the cells background
     for (let x = 0; x < results[y].length; x++) {
-      let i = x+permissionsTableInventoryTitlesColStart-1;  // Corresponding index for the permissionsList to the results[y] row
+      let i = x+2;  // Corresponding index for the permissionsList to the results[y] row
       if (permissionsList[i] === "Visible") {
         if (y % 2 == 0)
           html += '<td>' + results[y][x] + '</td>';
@@ -227,10 +242,17 @@ function handleCellEdit(event) {
 
   // Update the cache data to match the new cell value
   // Note: There is no need to rerun the cacheInventoryListFunction, instead just update that cell witin the cached data itself
+  let oldCacheCellValue = cachedInventoryData[rowIndex-1][colIndex-1];
   cachedInventoryData[rowIndex-1][colIndex-1] = cellValue;
 
-  // Update the new value to the inventory sheet
-  google.script.run.updateInventoryFromWebpage(rowIndex, colIndex, cellValue);
+  // Update the inventory using the function in the .gs script
+  // If the script fails then revert back the cached data to avoid confusion for the user
+  google.script.run.withSuccessHandler(function(updateStatus) {
+      if (updateStatus) {
+        cachedInventoryData[rowIndex-1][colIndex-1] = oldCacheCellValue;
+        alert(updateStatus);
+      }
+    }).updateInventoryFromWebpage(rowIndex, colIndex, cellValue);
 }
 
 </script>

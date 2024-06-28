@@ -241,7 +241,7 @@ function handleCellEdit(event) {
   colIndex = resultCellCols[colIndex];
 
   // Update the cache data to match the new cell value
-  // Note: There is no need to rerun the cacheInventoryListFunction, instead just update that cell witin the cached data itself
+  // Note: There is no need to rerun the cacheInventoryListFunction, instead just update that cell within the cached data itself
   let oldCacheCellValue = cachedInventoryData[rowIndex-1][colIndex-1];
   cachedInventoryData[rowIndex-1][colIndex-1] = cellValue;
 

@@ -3,6 +3,7 @@ const ss = SpreadsheetApp.getActiveSpreadsheet();
 const inventory_sheet = ss.getSheetByName("Inventory");
 const permissions_sheet = ss.getSheetByName("Permissions");
 const detech_code_sheet = ss.getSheetByName("Detech_Code");
+const deleted_archive_sheet = ss.getSheetByName("Deleted_Archive");
 
 
 function onEdit(e) {
@@ -14,7 +15,17 @@ function onEdit(e) {
 
   if (activeCell.getA1Notation() === "B1") {
     setupAllHandsOnDeckMode(activeCellValue);
+  } else if (activeCell.getA1Notation() === "E1" && activeCellValue) {
+    addNewUserWithPermissions();
+    activeCell.setValue(false);
   }
+}
+
+function addNewUserWithPermissions() {
+  let permissionsStartRow = detech_code_sheet.getRange("C2").getValue();
+  let permissionsRowTotal = detech_code_sheet.getRange("A2").getValue();
+  let otherUsersRow = permissionsStartRow + permissionsRowTotal - 1;
+  permissions_sheet.insertRowBefore(otherUsersRow);
 }
 
 function setupAllHandsOnDeckMode(activeCellValue) {
@@ -80,12 +91,32 @@ function getPermissionsListGSFunction(rowStart, colStart=1) {
   return permissions_sheet.getRange(rowStart, colStart, numRows, numCols).getValues();
 }
 
+function deleteInventoryRow(rowIndex) {
+  try {
+    // Archive the deleted row
+    let row = inventory_sheet.getRange(rowIndex+1, 1, 1, inventory_sheet.getLastColumn()).getValues()[0];
+    deleted_archive_sheet.appendRow(row);
+  } catch (e) {
+    return e;
+  }
+
+  try {
+    // Delete the row in the inventory database
+    inventory_sheet.deleteRow(rowIndex+1);
+    return false;
+  } catch (e) {
+    return e;
+  }
+
+  // I probably dont need to split these try statements but I thought it might be extra safe
+}
+
 function updateInventoryFromWebpage(row, col, value) {
   try {
-    inventory_sheet.getRange(row+1, col).setValue(value); 
+    inventory_sheet.getRange(row+1, col).setValue(value);
     return false; // Update successful
   } catch (e) {
-    return e; // Update failed
+    return e;     // Update failed
   }
 }
 

@@ -15,6 +15,9 @@
   <input type="button" value="Search" onclick="searchInventory()">
 </form>
 <br>
+<!-- Set up the container for the add item feature -->
+<div id="add_item_container"></div>
+<br><br>
 <!-- Set up the container for the table which holds the search results -->
 <div id="results"></div>
 
@@ -23,6 +26,7 @@
 // Global dev variables
 const permissionsStartRow = 8;  // Update this if you change the starting row of the permissions table in the permissions sheet
 const permissionsTypes = ["None", "Add", "Add & Delete", "Hidden", "Visible", "Edit"];
+const addItemsIgnoreColumns = [0, 2]; // Tell the addItemsContainer which columns to ignore for the user input boxes ["Index", "Date"]. The user does not need to input values for these columns when adding an item to the inventory. This is in reference to the inventoryColTitles array
 
 // These variables store information collected from functions in the .gs file
 var cachedInventoryData = null;
@@ -88,6 +92,8 @@ function waitForData() {
   document.getElementById("results").innerHTML = "";
   getInventoryColTitles();
   setUsersPermissions();
+  if (permissionsList[1] === permissionsTypes[1] || permissionsList[1] === permissionsTypes[2]) // Permissions === "Add" or "Add & Delete"
+    setupAddItemsContainer();
 }
 
 // Check if the permissions are set correctly and have no discrepancies
@@ -132,6 +138,95 @@ function setUsersPermissions() {
   }
 }
 
+function setupAddItemsContainer() {
+  let addItemContainer = document.getElementById("add_item_container");
+
+  let j = 0;  // Index for the addItemsIgnoreColumns array
+  for (let i = 0; i < inventoryColTitles.length; i++) {
+    // Skip all the columns the user doesn't need to input items into the inventory
+    if (j < addItemsIgnoreColumns.length && i == addItemsIgnoreColumns[j]) {
+      j++;
+      continue;
+    }
+
+    // Create a new input element for each iteration
+    let input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = inventoryColTitles[i];
+    input.id = "addItemInput" + i;  // Match the column in the inventory database
+    input.name = "addItemInput" + i;
+    input.onkeydown = function(event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+      }
+    };
+    addItemContainer.appendChild(input);
+  }
+
+  // Create the add button
+  let button = document.createElement("button");
+  button.id = "addItemButton";
+  button.name = "addItemButton";
+  button.textContent = "Add New Item";
+  button.setAttribute("onclick", "addItem()"); 
+  addItemContainer.appendChild(button);
+}
+
+function addItem() {
+  let addItemContainer = document.getElementById("add_item_container");
+
+  // Get all the inputted data
+  let item = [];
+  let requireFirst = true;  // Make sure the first input is set. This is the name of the item. This is required for the program to work minimually
+  let j = 0;  // Index for the addItemsIgnoreColumns array
+  for (let i = 0; i < inventoryColTitles.length; i++) {
+    // Add empty columns that are not inputted. This helps keep this array correspond to the columns in the inventory dataset
+    if (j < addItemsIgnoreColumns.length && i == addItemsIgnoreColumns[j]) {
+      j++;
+      item.push("");
+      continue;
+    }
+
+    let inputValue = document.getElementById("addItemInput"+i).value;
+    inputValue = inputValue.trim();
+    if (requireFirst && inputValue == "") {
+      alert("The name of the Item is required");
+      return;
+    }
+    requireFirst = false; // Once the first input was added turn off the requirement
+    item.push(inputValue);
+  }
+
+  // Hide the button while its loading
+  document.getElementById("addItemButton").style.visibility = "hidden";
+  google.script.run.withSuccessHandler(function(addStatus) {
+    if (addStatus) {
+      console.log(addStatus);
+      alert("Failed to add the Item");
+    } else {
+      // Reset all the input boxes to blank fields
+      for (let i = 0; i < inventoryColTitles.length; i++) {
+        let inputBox = document.getElementById("addItemInput"+i);
+        if (inputBox) {
+          inputBox.value = "";
+        }
+      }
+      // Add the new element to the cache
+      item[0] = 1;  // Force the first column to 1 which indicates it is the first index in the inventory dataset
+      cachedInventoryData.unshift(item); // Add the new item to the beginning of the cached data
+      // Reset the indexes in the cached data
+      for (let i = 0; i < cachedInventoryData.length; i++)
+        cachedInventoryData[i][0] = i+1;
+      // Search the inventory with the new item so it shows on top
+      document.getElementById("query").value = item[1];
+      searchInventory();
+    }
+
+    // Show the button again after its done loading
+    document.getElementById("addItemButton").style.visibility = "visible";
+  }).addInventoryItem(item);
+}
+
 
 function searchInventory() {
   let searchQuery = document.getElementById("query").value;
@@ -151,7 +246,7 @@ function searchInventory() {
     let name = row[1].toLowerCase();
     let searchTerms = row[3].toLowerCase();
     // Add the row if the search query matches any sub strings in the name or the search terms
-    if (name.includes(searchQuery) || searchTerms.includes(searchQuery)) {
+    if (name.includes(searchQuery) || searchTerms.includes(searchQuery) || searchQuery === '*') {
       results.push(row);
       resultCellRows.push(i+1); // Store the row index of the cells displayed in the result 
     }
@@ -168,11 +263,11 @@ function displayResults(results) {
   }
 
   // Setup the table
-  let html = '<table style="border-collapse: collapse; width: 100%;"><tr style="background-color: black; color: white;">';
+  let html = '<table id="results_table" style="border-collapse: collapse; width: 100%;"><tr style="background-color: black; color: white;">';
 
   // Set the title row
   if (permissionsList[1] === permissionsTypes[2]) // Permissions === "Add & Delete"
-    html += '<th></th>';  // Delete feature buttons column header
+    html += '<th>&emsp;</th>';  // Delete feature buttons column header
   for (let i = 0; i < inventoryColTitles.length; i++) {
     let j = i+2;  // Corresponding index for the permissionsList to the inventoryColTitles arrays
     if (permissionsList[j] === permissionsTypes[4] || permissionsList[j] === permissionsTypes[5]) { // Permissions === "Visible" or "Edit"
@@ -187,7 +282,7 @@ function displayResults(results) {
 
     // Add the delete buttons
     if (permissionsList[1] === permissionsTypes[2])     // Permissions === "Add & Delete"
-      html += '<td><button onclick=deleteRow('+y+')>Delete Row</button></td>';
+      html += '<td><button class="delete_button" onclick=deleteRow('+y+')>Delete Row</button></td>';
 
     // Set each cell depending on its permission level
     // And also add an alternating colour style to the cells background
@@ -218,61 +313,26 @@ function deleteRow(tableRow) {
   let result = confirm("Are you sure you want to delete this row in the inventory database?");
   if (!result) return;  // User did not press OK
 
-  // Remove the delete button while its waiting to be deleted
-  setTableCell(tableRow+1, 0, "");
+  // Hide all delete buttons while its loading
+  let deleteButtons = document.getElementsByClassName('delete_button');
+  for (let i = 0; i < deleteButtons.length; i++)
+    deleteButtons[i].style.visibility = "hidden";
 
   let rowIndex = resultCellRows[tableRow];
   google.script.run.withSuccessHandler(function(deleteStatus) {
     if (deleteStatus) {
       console.log(deleteStatus);
       alert("Failed to delete the row");
-      
-      // Create the button element with onclick attribute
-      let button = document.createElement('button');
-      button.textContent = 'Delete Row';
-      button.setAttribute('onclick', 'deleteRow(' + tableRow + ')'); 
-      setTableCell(tableRow+1, 0, button); // Reset the button if it failed
     } else {
+      // Remove the row from the cached data
       cachedInventoryData.splice(rowIndex-1, 1);
+      // Reset the indexes in the cached data
+      for (let i = 0; i < cachedInventoryData.length; i++)
+        cachedInventoryData[i][0] = i+1;
+      // Requery the inventory which will show the removed row and also reset the delete buttons back
       searchInventory();
     }
   }).deleteInventoryRow(rowIndex);
-}
-
-// Ya idk why i spent so much time on this dumb function. literally only for visual effects for IF it fails smh
-function setTableCell(row, col, value) {
-  // Get the HTML text from the "results" div container
-  let tableHTML = document.getElementById("results").innerHTML;
-
-  // Create a temporary div element to convert the HTML string to DOM structure
-  let tempDiv = document.createElement("div");
-  tempDiv.innerHTML = tableHTML;
-  let table = tempDiv.querySelector("table");
-
-  // Set the cell's content based on the type of 'value'
-  let tableRow = table.rows[row];
-  let cell = tableRow.cells[col];
-
-  // Clear existing content in the cell
-  cell.innerHTML = "";
-
-  // Check the type of 'value' and set accordingly
-  if (typeof value === 'string') {
-    // If 'value' is a string, set it as text content
-    cell.textContent = value;
-  } else if (value instanceof HTMLElement) {
-    // If 'value' is already an HTML element, append it to the cell
-    cell.appendChild(value);
-  } else if (typeof value === 'object' && value.nodeType === Node.ELEMENT_NODE) {
-    // If 'value' is an object that is an HTML element (like a button, p, etc.)
-    cell.appendChild(value);
-  } else {
-    // Default to setting 'value' as text content
-    cell.textContent = value.toString();
-  }
-
-  // Update the "results" div with the modified table
-  document.getElementById("results").innerHTML = tempDiv.innerHTML;
 }
 
 // Sets event listeners to all the cells in the table that are editable

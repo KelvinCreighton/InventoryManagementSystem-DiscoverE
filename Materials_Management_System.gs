@@ -91,10 +91,26 @@ function getPermissionsListGSFunction(rowStart, colStart=1) {
   return permissions_sheet.getRange(rowStart, colStart, numRows, numCols).getValues();
 }
 
+function addInventoryItem(item) {
+  try {
+    // Add new row with the proper setup
+    inventory_sheet.insertRowBefore(2);
+    inventory_sheet.getRange("A2").setFormula('=IF(B2 <> "", Row()-1, "")');
+
+    for (let i = 1; i < item.length; i++) {  // Skip the first element which is just the index of the item in the inventory dataset
+      let cellRange = intToLetter(i+1) + "2";
+      inventory_sheet.getRange(cellRange).setValue(item[i]);
+    }
+    return false;
+  } catch (e) {
+    return e;
+  }
+}
+
 function deleteInventoryRow(rowIndex) {
   try {
     // Archive the deleted row
-    let row = inventory_sheet.getRange(rowIndex+1, 1, 1, inventory_sheet.getLastColumn()).getValues()[0];
+    let row = inventory_sheet.getRange(rowIndex+1, 2, 1, inventory_sheet.getLastColumn()).getValues()[0];
     deleted_archive_sheet.appendRow(row);
   } catch (e) {
     return e;

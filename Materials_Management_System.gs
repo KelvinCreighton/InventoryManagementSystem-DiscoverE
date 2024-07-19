@@ -13,15 +13,47 @@ function onEdit(e) {
   const activeCell = e.range;
   const activeCellValue = activeCell.getValue();
 
-  if (activeCell.getA1Notation() === "B1") {
+  // Check if the active cell is a dropdown menu
+  if (activeCell.getDataValidation().getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
+    let userEmail = active_sheet.getRange(activeCell.getRow(), 1).getValue();
+    updateInventorySheetPermissions(activeCellValue, activeCell.getColumn()-2, userEmail);
+  }
+
+  // Finish this later if its still a good idea
+  /*if (activeCell.getA1Notation() === "B1") {
     setupAllHandsOnDeckMode(activeCellValue);
-  } else if (activeCell.getA1Notation() === "E1" && activeCellValue) {
+  } else if (activeCell.getA1Notation() === "B2" && activeCellValue) {
     addNewUserWithPermissions();
     activeCell.setValue(false);
+  }*/
+}
+
+function updateInventorySheetPermissions(activeCellValue, activeColumn, userEmail) {
+  // Ignore this function for these specific users. They will not have any editing power ever
+  if (userEmail === "Other Users")
+    return;
+  
+  // Ignore this function for these specific users. They will always have editing power
+  if (userEmail === "detech@ualberta.ca" || userEmail === "degem@ualberta.ca" || userEmail === "desi1@ualberta.ca")
+    return;
+  
+  const protections = inventory_sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+  for (let i = 0; i < protections.length; i++) {
+    let protectionColumn = protections[i].getDescription();
+    if (protectionColumn !== activeColumn.toString())
+      continue;
+
+    if (activeCellValue === "Edit") {
+      protections[i].addEditor(userEmail);
+      //alert("Edit Permissions Added to: " + userEmail);    
+    } else {
+      protections[i].removeEditor(userEmail);
+      //alert("Edit Permissions Removed from: " + userEmail);
+    }
   }
 }
 
-function addNewUserWithPermissions() {
+/*function addNewUserWithPermissions() {
   let permissionsStartRow = detech_code_sheet.getRange("C2").getValue();
   let permissionsRowTotal = detech_code_sheet.getRange("A2").getValue();
   let otherUsersRow = permissionsStartRow + permissionsRowTotal - 1;
@@ -43,7 +75,7 @@ function setupAllHandsOnDeckMode(activeCellValue) {
     permissions_sheet.getRange("A1").setBackground("#b6d7a8");
   }
 }
-
+*/
 
 
 
@@ -76,6 +108,10 @@ function getCachedInventoryDataGSFunction() {
 // Get the current users email to track which permissions correspond to them
 function getActiveUserGSFunction() {
   return Session.getActiveUser().getEmail();
+}
+
+function test() {
+  Logger.log(getPermissionsListGSFunction(8));
 }
 
 function getPermissionsListGSFunction(rowStart, colStart=1) {
@@ -127,8 +163,12 @@ function deleteInventoryRow(rowIndex) {
   // I probably dont need to split these try statements but I thought it might be extra safe
 }
 
-function updateInventoryFromWebpage(row, col, value) {
+function updateInventoryFromWebpage(row, col, value, itemName) {
   try {
+    let currentItemName = inventory_sheet.getRange(row+1, 2).getValue();
+    if (currentItemName !== itemName)
+      return "The item may have been deleted or moved in the inventory. The dataset has been reloaded please try again";
+
     inventory_sheet.getRange(row+1, col).setValue(value);
     return false; // Update successful
   } catch (e) {
@@ -143,13 +183,44 @@ function updateInventoryFromWebpage(row, col, value) {
 =====================================================================================================================================================
 */
 
-function intToLetter(num) {
-    return String.fromCharCode(num+64);
+function intToLetter(number) {
+  return String.fromCharCode(number + 64);
+}
+
+function letterToInt(letter) {
+  return letter.charCodeAt(0) - 64;
 }
 
 function alert(msg) {
   SpreadsheetApp.getUi().alert(msg);
 }
+
+
+
+/*
+
+
+POTENTIAL ISSUES:
+
+There is this huge issue where if a user manually adds or deletes an item in the inventory. since the cache is only updated every 1 minute this could have serious issues if a user were to try modifiying items in a wrong row.
+
+      Syncing Issues:
+
+1: when a user deletes an item and then another user tries to modify that same item without updating the cache
+2: when a user deletes an item and then another user tries to delete the same item without updating the cache
+
+
+SOLUTIONS:
+
+
+      Syncing Solutions:
+
+1: Refresh the cache every 30 seconds or less
+2: When users are modifying anything with the inventory have the cache update. However do not delete the code that modifies the cache directly while it is being updated. This makes things feel fast even if its not.
+3: When a user modifies an item have it check if the item still exists. if it no longer exists then alert the user it has been deleted
+4: when a user deletes an item have it also check if the item still exists.
+
+*/
 
 
 

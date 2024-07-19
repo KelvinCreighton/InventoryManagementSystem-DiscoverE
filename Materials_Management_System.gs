@@ -29,11 +29,11 @@ function onEdit(e) {
 }
 
 function updateInventorySheetPermissions(activeCellValue, activeColumn, userEmail) {
-  // Ignore this function for these specific users. They will not have any editing power ever
+  // Ignore this function for these specific users. They will NOT have any editing permissions
   if (userEmail === "Other Users")
     return;
   
-  // Ignore this function for these specific users. They will always have editing power
+  // Ignore this function for these specific users. They will have FULL editing permissions
   if (userEmail === "detech@ualberta.ca" || userEmail === "degem@ualberta.ca" || userEmail === "desi1@ualberta.ca")
     return;
   
@@ -45,10 +45,10 @@ function updateInventorySheetPermissions(activeCellValue, activeColumn, userEmai
 
     if (activeCellValue === "Edit") {
       protections[i].addEditor(userEmail);
-      //alert("Edit Permissions Added to: " + userEmail);    
+      alert("Editing Permissions Added to: " + userEmail);    
     } else {
       protections[i].removeEditor(userEmail);
-      //alert("Edit Permissions Removed from: " + userEmail);
+      alert("Editing Permissions Removed from: " + userEmail);
     }
   }
 }
@@ -90,7 +90,7 @@ function setupAllHandsOnDeckMode(activeCellValue) {
 
 // Setup the webpage
 function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Search_Feature_Form');
+  return HtmlService.createHtmlOutputFromFile("Search_Feature_Form");
 }
 
 function getCachedInventoryDataGSFunction() {
@@ -108,10 +108,6 @@ function getCachedInventoryDataGSFunction() {
 // Get the current users email to track which permissions correspond to them
 function getActiveUserGSFunction() {
   return Session.getActiveUser().getEmail();
-}
-
-function test() {
-  Logger.log(getPermissionsListGSFunction(8));
 }
 
 function getPermissionsListGSFunction(rowStart, colStart=1) {

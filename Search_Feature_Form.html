@@ -12,7 +12,8 @@
 <form id="queryForm">
   <label for="query">Enter Item Name: </label>
   <input type="text" id="query" name="query" onkeydown="searchInputKeyPressHandle(event);">
-  <input type="button" value="Search" onclick="searchInventory()">
+  <input type="button" value="Search" onclick="loadCacheAndSearch()">
+  <input type="text" id="bluenote" value="&nbsp; NOTE: All blue shaded cells are editable and will modify the Inventory spreadsheet" style="font-weight: bold; background-color: #d0d0ff; border: none; margin-left: 150px; width: 535px;" readonly>
 </form>
 <br>
 <!-- Set up the container for the add item feature -->
@@ -27,58 +28,85 @@
 const permissionsStartRow = 8;  // Update this if you change the starting row of the permissions table in the permissions sheet
 const permissionsTypes = ["None", "Add", "Add & Delete", "Hidden", "Visible", "Edit"];
 const addItemsIgnoreColumns = [0, 2]; // Tell the addItemsContainer which columns to ignore for the user input boxes ["Index", "Date"]. The user does not need to input values for these columns when adding an item to the inventory. This is in reference to the inventoryColTitles array
+// Note: if you modify the columns in the permissions and inventory database sheets you may need to update this
 
 // These variables store information collected from functions in the .gs file
-var cachedInventoryData = null;
-var activeUser = null;
-var permissionsList = [];
+var cachedInventoryData = null; // Inventory in google sheets saved as cache to the website to reduce load time
+var activeUser = null;          // The email of the user currently viewing the website
+var permissionsList = [];       // List of permissions the current user has
 
 // These arrays keep track of the cells position and information corresponding to the inventory sheet
-var inventoryColTitles = [];
+var inventoryColTitles = [];    // The name of the columns in the inventory aka the items attributes. Name, Location, Amount, etc...
 var resultCellRows = [];
 var resultCellCols = [];
 
 var waitForDataIntervalID;  // ID for the inverval that runs the "waitForData" function
 
 
-// Make the enter keypress act the same as the "Search" button in the input box
+// Force the enter keypress act the same as the "Search" button in the input box
 function searchInputKeyPressHandle(event) {
   if (event.key === "Enter") {
-    event.preventDefault();
-    searchInventory();
+    event.preventDefault();     // Prevent the enter key from running its main functionality
+    loadCacheAndSearch();
   }
 }
 
+// Load the cache from the inventory sheet and run the search query of the current user inputted search term
+// Note that loading the cache takes longer than running the search so the order in which these occur is technically swapped
+function loadCacheAndSearch() {
+  loadInventoryToCache();   // Runs first but loads second
+  searchInventory();        // Runs second but loads first (and then runs and loads third in the loadInventoryToCache function)
+  // To be clear, this is the order:
+  // RUN loadInventoryToCache() -> RUN searchInventory() -> searchInventory() LOADS -> loadInventoryToCache LOADS -> RUN searchInventory() -> searchInventory() LOADS
+  // The searchInventory() loads first so the user does not have to wait for any cache updates. It is then run again when the cache is updated in the event there is a 
+  // discrepancy in the new cache vs the current output
+}
 
+// Load the inventory from google sheets into a cache variable as a 2d array
+function loadInventoryToCache(requery=true) {
+  // Load the cache
+  let cacheUpdated = false;
+  google.script.run.withSuccessHandler(data => {cachedInventoryData = data; cacheUpdated = true;}).getCachedInventoryDataGSFunction();
+            
+  // Wait for the cache to finish loading then requery the search
+  function waitForCache() {
+    if (cacheUpdated) {
+      console.log("========    Cache Updated    " + getCurrentDateAndTime() + "    ========")
+      if (requery)
+        searchInventory();
+      cacheUpdated = false;
+      clearInterval(waitForCacheIntervalID); // Stop the active check
+    }
+  }
+  waitForCacheIntervalID = setInterval(waitForCache, 100);  // Start the active check
+}
+
+
+// Loads all required elements and data for the website onload
 function initialize() {
   // Get the active user and store its value in the global "activeUser" variable
   google.script.run.withSuccessHandler(user => {activeUser = user}).getActiveUserGSFunction();
   // Get the permissions list from the sheet and store it in the the global "permissionsList" array
   google.script.run.withSuccessHandler(list => {permissionsList = list}).getPermissionsListGSFunction(permissionsStartRow);
   // Get the entire inventory from the sheet and store it in the "cachedInventoryData" 2d array as cached data
-  cacheInventoryListFunction();
+  loadInventoryToCache(false);
   // Then set an interval to continually update this cached inventory data after some time has passed
-  setInterval(cacheInventoryListFunction, 600000);  // 10 Minute interval = 600,000 miliseconds
+  setInterval(loadInventoryToCache, 60000);  // 60 second interval = 60,000 miliseconds
   // (I could not find a better way to get the variables from the .gs file so this is what I resorted to)
 
 
   // Wait for all the data to be received from the gs functions before allowing the user to use the search feature
   // So far this takes around 3 seconds on average
   waitForDataIntervalID = setInterval(waitForData, 100);
-  // Hide the search html form while waiting for data
+  // Hide the search html form while waiting for data and temporarily set the search result element to a loading indicator
   document.getElementById("queryForm").style.visibility = "hidden";
   document.getElementById("results").innerHTML = "<b>Loading Inventory Dataset...</b>";
-}
-
-// Load the inventory from google sheets into cache
-function cacheInventoryListFunction() {
-  google.script.run.withSuccessHandler(data => {cachedInventoryData = data}).getCachedInventoryDataGSFunction();
 }
 
 // Wait for all the data to be received from the gs functions before allowing the user to use the search feature
 // So far this takes around 3 seconds on average
 function waitForData() {
-  if (cachedInventoryData === null || activeUser === null || permissionsList.length == 0) return;
+  if (cachedInventoryData === null || activeUser === null || permissionsList.length === 0) return;
   if (!checkPermissions()) {
     alert("There is an error with the Permissions sheet");
     clearInterval(waitForDataIntervalID); // Stop the active check
@@ -86,23 +114,40 @@ function waitForData() {
     return;
   }
 
+
   // If everything is cleared then allow the user to start searching the inventory
   clearInterval(waitForDataIntervalID); // Stop the active check
   document.getElementById("queryForm").style.visibility = "visible";
   document.getElementById("results").innerHTML = "";
   getInventoryColTitles();
   setUsersPermissions();
+
   if (permissionsList[1] === permissionsTypes[1] || permissionsList[1] === permissionsTypes[2]) // Permissions === "Add" or "Add & Delete"
     setupAddItemsContainer();
+
+  
+  // Hide the blue note if the user does not have any editing power
+  let atLeastOneEditPermissions = false;
+  for (let i = 2; i < permissionsList.length; i++) {
+    if (permissionsList[i] === permissionsTypes[5]) { // Permissions[i] === "Edit"
+      atLeastOneEditPermissions = true;
+      break;
+    }
+  }
+  if (!atLeastOneEditPermissions)
+    document.getElementById("bluenote").style.visibility = "hidden";
 }
 
 // Check if the permissions are set correctly and have no discrepancies
 function checkPermissions() {
   // Check if there is at least one user
-  if (permissionsList.length < 2) return false;
-  // If there is only one user check to make sure it is the "other" user
+  if (permissionsList.length < 2)
+    return false;
+  // If there is only one user check, to make sure that only user is the "other" user
   let firstUser = permissionsList[1][0].toLowerCase();
-  if (permissionsList.length == 2 && firstUser !== "other" && firstUser !== "other user" && firstUser !== "other users") return false;
+  if (permissionsList.length === 2 && firstUser !== "other" && firstUser !== "other user" && firstUser !== "other users")
+    return false;
+  
   // Check if all the permissions were set correctly for each user
   for (let y = 1; y < permissionsList.length; y++) {
     for (let x = 1; x < permissionsList[y].length; x++) {
@@ -112,7 +157,7 @@ function checkPermissions() {
         if (permissionsList[y][x] === permissionsTypes[i])
           break;
       // If i is the length of the array then the value was not found
-      if (i == permissionsTypes.length)
+      if (i === permissionsTypes.length)
         return false;
     }
   }
@@ -131,7 +176,7 @@ function setUsersPermissions() {
   // or the end of the list is reached, which is reserved for "Other User" permissions,
   // set the permissions to a 1d array containing only that users permissions
   for (let i = 1; i < permissionsList.length; i++) {
-    if (activeUser === permissionsList[i][0] || i == permissionsList.length-1) {
+    if (activeUser === permissionsList[i][0] || i === permissionsList.length-1) {
       permissionsList = permissionsList[i];
       break;
     }
@@ -144,7 +189,7 @@ function setupAddItemsContainer() {
   let j = 0;  // Index for the addItemsIgnoreColumns array
   for (let i = 0; i < inventoryColTitles.length; i++) {
     // Skip all the columns the user doesn't need to input items into the inventory
-    if (j < addItemsIgnoreColumns.length && i == addItemsIgnoreColumns[j]) {
+    if (j < addItemsIgnoreColumns.length && i === addItemsIgnoreColumns[j]) {
       j++;
       continue;
     }
@@ -181,7 +226,7 @@ function addItem() {
   let j = 0;  // Index for the addItemsIgnoreColumns array
   for (let i = 0; i < inventoryColTitles.length; i++) {
     // Add empty columns that are not inputted. This helps keep this array correspond to the columns in the inventory dataset
-    if (j < addItemsIgnoreColumns.length && i == addItemsIgnoreColumns[j]) {
+    if (j < addItemsIgnoreColumns.length && i === addItemsIgnoreColumns[j]) {
       j++;
       item.push("");
       continue;
@@ -189,7 +234,7 @@ function addItem() {
 
     let inputValue = document.getElementById("addItemInput"+i).value;
     inputValue = inputValue.trim();
-    if (requireFirst && inputValue == "") {
+    if (requireFirst && inputValue === "") {
       alert("The name of the Item is required");
       return;
     }
@@ -199,10 +244,11 @@ function addItem() {
 
   // Hide the button while its loading
   document.getElementById("addItemButton").style.visibility = "hidden";
+
   google.script.run.withSuccessHandler(function(addStatus) {
     if (addStatus) {
       console.log(addStatus);
-      alert("Failed to add the Item");
+      alert("Failed to add the Item. Error: " + addStatus);
     } else {
       // Reset all the input boxes to blank fields
       for (let i = 0; i < inventoryColTitles.length; i++) {
@@ -229,35 +275,38 @@ function addItem() {
 
 
 function searchInventory() {
+  // -------------------
+  // Query the Inventory
+  // -------------------
   let searchQuery = document.getElementById("query").value;
   searchQuery = searchQuery.trim().toLowerCase();
-  if (searchQuery == "") return;    // Skip if the query is empty
+  if (searchQuery === "") return;    // Skip if the query is empty
   // Error handle for improperly retrieved data
-  if (cachedInventoryData.length == 0 || cachedInventoryData[0].length < inventoryColTitles.length) {
-    alert("There was an issue retrieving the data");
+  if (cachedInventoryData.length === 0 || cachedInventoryData[0].length < inventoryColTitles.length) {
+    alert("There was an issue retrieving the inventory data");
     return;
-  } // Note: the short circuit nature of the || operation will not cause an error when attempting to retrieve the 0th index if the length is 0
+  } // Note: the short circuit nature of the || operation will NOT cause an error when attempting to retrieve the 0th index if the length is 0
 
   // Query the inventory data from cache and store the resulting 2d array
   let results = [];
   resultCellRows = [];
   for (let i = 0; i < cachedInventoryData.length; i++) {
     let row = cachedInventoryData[i];
-    let name = row[1].toLowerCase();
-    let searchTerms = row[3].toLowerCase();
+    let name = row[1].toString().toLowerCase();
+    let searchTerms = row[3].toString().toLowerCase();
     // Add the row if the search query matches any sub strings in the name or the search terms
     if (name.includes(searchQuery) || searchTerms.includes(searchQuery) || searchQuery === '*') {
       results.push(row);
       resultCellRows.push(i+1); // Store the row index of the cells displayed in the result 
     }
   }
-  displayResults(results);
-}
 
+  // -------------------
+  // Display the Results
+  // -------------------
 
-function displayResults(results) {
   let resultsDiv = document.getElementById("results");
-  if (results.length == 0) {
+  if (results.length === 0) {
     resultsDiv.innerHTML = "No items found.";
     return;
   }
@@ -289,13 +338,13 @@ function displayResults(results) {
     for (let x = 0; x < results[y].length; x++) {
       let i = x+2;  // Corresponding index for the permissionsList to the results[y] row
       if (permissionsList[i] === permissionsTypes[4]) {   // Permissions === "Visible"
-        if (y % 2 == 0)
+        if (y % 2 === 0)
           html += '<td>' + results[y][x] + '</td>';
         else
           html += '<td style="background-color: #e0e0e0;">' + results[y][x] + '</td>';
         resultCellCols.push(x+1); // Store the column index of the cells that are visible
       } else if (permissionsList[i] === permissionsTypes[5]) {         // Permissions === "Edit"
-        if (y % 2 == 0)
+        if (y % 2 ===    0)
           html += '<td contenteditable="true" style="background-color: #e8e8ff;">' + results[y][x] + '</td>';
         else
           html += '<td contenteditable="true" style="background-color: #d0d0ff;">' + results[y][x] + '</td>';
@@ -308,6 +357,8 @@ function displayResults(results) {
   resultsDiv.innerHTML = html;
   bindEditableCells();
 }
+
+
 
 function deleteRow(tableRow) {
   let result = confirm("Are you sure you want to delete this row in the inventory database?");
@@ -322,7 +373,7 @@ function deleteRow(tableRow) {
   google.script.run.withSuccessHandler(function(deleteStatus) {
     if (deleteStatus) {
       console.log(deleteStatus);
-      alert("Failed to delete the row");
+      alert("Failed to delete the row. Error: " + deleteStatus);
     } else {
       // Remove the row from the cached data
       cachedInventoryData.splice(rowIndex-1, 1);
@@ -356,7 +407,7 @@ function cellEditKeyDownHandle(event) {
 }
 
 function handleCellEdit(event) {
-  // Get the cells properties
+  // Get the new cells value
   const cell = event.target;
   const row = cell.parentElement;
   let rowIndex = Array.from(row.parentElement.children).indexOf(row);
@@ -368,21 +419,39 @@ function handleCellEdit(event) {
     colIndex -= 1;
 
   // Translate the positions to correspond to the inventory sheet rows and columns
-  rowIndex = resultCellRows[rowIndex-1];    // -1 because the first row is just the titles
+  rowIndex = resultCellRows[rowIndex-1];
   colIndex = resultCellCols[colIndex];
+
+  // Get the items name of the cell being modified from the cache
+  // This will be checked in the inventory sheet to verify it is the correct item being modified
+  const itemName = cachedInventoryData[rowIndex-1][1];
 
   // Update the inventory using the function in the .gs script
   // If the script fails then alert the user and refresh the search query
   // otherwise update the cache to correspond to the new update
   google.script.run.withSuccessHandler(function(updateStatus) {
+    // Reload the cache and search query
+    //loadInventoryToCache(); // ya doing this actually made it horible to edit cells. It is good for safety but can be sort of ignored a bit since there is a cache update every 60 seconds and whenever the user querys again
+    
     if (updateStatus) {
-      console.log(updateStatus);
-      alert("Failed to update the cell");
-      searchInventory();
-    } else {
-      cachedInventoryData[rowIndex-1][colIndex-1] = cellValue;
+      let errorMessage = "Failed to update the cell. Error: " + updateStatus;
+      console.log(errorMessage);
+      alert(errorMessage);
     }
-  }).updateInventoryFromWebpage(rowIndex, colIndex, cellValue);
+  }).updateInventoryFromWebpage(rowIndex, colIndex, cellValue, itemName);
+}
+
+
+
+
+function getCurrentDateAndTime() {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const seconds = now.getSeconds();
+
+  // Format as a string and return
+  return hours+":"+minutes+":"+seconds;
 }
 
 </script>

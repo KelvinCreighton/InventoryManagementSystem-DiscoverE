@@ -287,7 +287,7 @@ function searchInventory() {
     return;
   } // Note: the short circuit nature of the || operation will NOT cause an error when attempting to retrieve the 0th index if the length is 0
 
-  // Query the inventory data from cache and store the resulting 2d array
+  // Query the inventory data from cache and append each items row in a results array
   let results = [];
   resultCellRows = [];
   for (let i = 0; i < cachedInventoryData.length; i++) {
@@ -337,17 +337,19 @@ function searchInventory() {
     // And also add an alternating colour style to the cells background
     for (let x = 0; x < results[y].length; x++) {
       let i = x+2;  // Corresponding index for the permissionsList to the results[y] row
-      if (permissionsList[i] === permissionsTypes[4]) {   // Permissions === "Visible"
+      if (permissionsList[i] === permissionsTypes[4]) {               // Permissions === "Visible"
         if (y % 2 === 0)
           html += '<td>' + results[y][x] + '</td>';
         else
           html += '<td style="background-color: #e0e0e0;">' + results[y][x] + '</td>';
         resultCellCols.push(x+1); // Store the column index of the cells that are visible
+        
       } else if (permissionsList[i] === permissionsTypes[5]) {         // Permissions === "Edit"
-        if (y % 2 ===    0)
-          html += '<td contenteditable="true" style="background-color: #e8e8ff;">' + results[y][x] + '</td>';
+        if (y % 2 === 0)
+          html += '<td style="background-color: #e8e8ff;"';
         else
-          html += '<td contenteditable="true" style="background-color: #d0d0ff;">' + results[y][x] + '</td>';
+          html += '<td style="background-color: #d0d0ff;"';
+        html += ' contenteditable="true" onblur="handleCellEdit(event)" onkeydown="cellEditKeyDownHandle(event)">' + results[y][x] + '</td>';
         resultCellCols.push(x+1); // Store the column index of the cells that are editable
       }
     }
@@ -355,7 +357,7 @@ function searchInventory() {
   }
   html += '</table>';
   resultsDiv.innerHTML = html;
-  bindEditableCells();
+  console.log(html.length);
 }
 
 
@@ -386,19 +388,6 @@ function deleteRow(tableRow) {
   }).deleteInventoryRow(rowIndex);
 }
 
-// Sets event listeners to all the cells in the table that are editable
-function bindEditableCells() {
-    document.querySelectorAll('td[contenteditable="true"]').forEach(cell => {
-        // Remove existing listeners to avoid duplicates
-        cell.removeEventListener("blur", handleCellEdit);
-        cell.removeEventListener("keydown", cellEditKeyDownHandle);
-        // Add "blur" event listener to handle "out of focus"
-        cell.addEventListener("blur", handleCellEdit);
-        // Add "keydown" event listener to handle Enter key
-        cell.addEventListener("keydown", cellEditKeyDownHandle);
-    });
-}
-
 function cellEditKeyDownHandle(event) {
     if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault(); // Prevent inserting a newline in the cell
@@ -427,16 +416,17 @@ function handleCellEdit(event) {
   const itemName = cachedInventoryData[rowIndex-1][1];
 
   // Update the inventory using the function in the .gs script
-  // If the script fails then alert the user and refresh the search query
-  // otherwise update the cache to correspond to the new update
   google.script.run.withSuccessHandler(function(updateStatus) {
-    // Reload the cache and search query
-    //loadInventoryToCache(); // ya doing this actually made it horible to edit cells. It is good for safety but can be sort of ignored a bit since there is a cache update every 60 seconds and whenever the user querys again
-    
+    // If there was an issue editing the cell then alert the user of the error
     if (updateStatus) {
       let errorMessage = "Failed to update the cell. Error: " + updateStatus;
       console.log(errorMessage);
       alert(errorMessage);
+    } else {  // If there wasn't an issue then update the existing cache
+      // The cache does get reloaded anyway but doing this first will help make things feel smoother
+      // If the user were to edit a cell and search right after, if the cell were to show up in the output it would not look to be changed
+      // By updating the existing cache before the reload it helps avoid this small issue
+      cachedInventoryData[rowIndex-1][colIndex-1] = cellValue;
     }
   }).updateInventoryFromWebpage(rowIndex, colIndex, cellValue, itemName);
 }

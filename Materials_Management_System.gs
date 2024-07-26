@@ -16,7 +16,7 @@ function onEdit(e) {
   // Check if the active cell is a dropdown menu
   if (activeCell.getDataValidation().getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
     let userEmail = active_sheet.getRange(activeCell.getRow(), 1).getValue();
-    updateInventorySheetPermissions(activeCellValue, activeCell.getColumn()-2, userEmail);
+    updateInventorySheetPermissions(activeCellValue, activeCell.getColumn()-2, activeCell.getRow(), userEmail);
   }
 
   // Finish this later if its still a good idea
@@ -28,7 +28,11 @@ function onEdit(e) {
   }*/
 }
 
-function updateInventorySheetPermissions(activeCellValue, activeColumn, userEmail) {
+function updateInventorySheetPermissions(activeCellValue, activeColumn, activeRow, userEmail, alertUser=true) {
+  // Skip for the index column
+  if (activeColumn === 1)
+    return;
+  
   // Ignore this function for these specific users. They will NOT have any editing permissions
   if (userEmail === "Other Users")
     return;
@@ -36,21 +40,92 @@ function updateInventorySheetPermissions(activeCellValue, activeColumn, userEmai
   // Ignore this function for these specific users. They will have FULL editing permissions
   if (userEmail === "detech@ualberta.ca" || userEmail === "degem@ualberta.ca" || userEmail === "desi1@ualberta.ca")
     return;
-  
+    
   const protections = inventory_sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
   for (let i = 0; i < protections.length; i++) {
     let protectionColumn = protections[i].getDescription();
+    // If a user is allowed to delete an item then force the program to allow an edit permissions in the items "Name" column
+    if (activeColumn === 0) {
+      activeColumn = 2;
+      if (activeCellValue === "Add & Delete") { // If it allows delete then force the names to "Edit"
+        activeCellValue = "Edit"
+      } else {  // If it does not allow delete then find the default value of the names permissions
+        activeCellValue = permissions_sheet.getRange(activeRow, 4).getValue();
+      }
+    }
+
+    // And ignore if the name is changing but the delete is allowed
+    if (activeColumn === 2 && activeCellValue !== "Edit" && permissions_sheet.getRange(activeRow, 2).getValue() === "Add & Delete")
+      return;
+
     if (protectionColumn !== activeColumn.toString())
       continue;
 
     if (activeCellValue === "Edit") {
       protections[i].addEditor(userEmail);
-      alert("Editing Permissions Added to: " + userEmail);    
+      if (alertUser)
+        alert("Editing Permissions Added to: " + userEmail);    
     } else {
       protections[i].removeEditor(userEmail);
-      alert("Editing Permissions Removed from: " + userEmail);
+      if (alertUser)
+        alert("Editing Permissions Removed from: " + userEmail);
     }
   }
+}
+
+
+function timeDrivenTriggerRemoveEmptyItemRows() {
+  // Search all rows with empty item names which mean they are flagged for deletion
+  let lastRow = detech_code_sheet.getRange("A6").getValue();
+  let values = inventory_sheet.getRange(2, 2, lastRow - 1).getValues();
+  let changeHappened = false;
+   // Loop from the last row to the first row to avoid indexing issues after row deletion
+  for (let y = values.length - 1; y >= 0; y--) {
+    if (values[y][0] === "") { // Check if the item name is empty
+      inventory_sheet.deleteRow(y + 2);
+      changeHappened = true;
+    }
+  }
+  if (changeHappened)
+    timeDrivenTriggerInventorySheetProtectionsUpdateFunction(true);
+}
+
+
+// Updates the range of the current permissions in each column of the items
+// When users add new items they require full edit permissions so the current permissions do not extend past the last item
+// Since this is the case and since non Admin users cannot update permissions, a trigger must be run every so often to update the current permissions
+// This function checks if there is a new item/items and updates the range of the current permissions accordingly
+function timeDrivenTriggerInventorySheetProtectionsUpdateFunction(skipCheck=false) {
+  let totalInventoryItems = detech_code_sheet.getRange("A6").getValue();
+  let lastRecordedItemIndexRange = detech_code_sheet.getRange("A10");
+  // Check for new items and skip this trigger if nothing has changed
+  if (!skipCheck && totalInventoryItems === lastRecordedItemIndexRange.getValue())
+    return;
+  
+  // Update each projections range to include the new row
+  const protections = inventory_sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+  const protectionsColumns = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "A", "OTHER"];
+  for (let i = 0; i < protections.length; i++) {
+    let protectionDescription = protections[i].getDescription();
+    // Check if the current protection is in the desired protection columns array and skip any that is not
+    let protectionInColumn = false;
+    for (let j = 0; j < protectionsColumns.length; j++) {
+      if (protectionDescription === protectionsColumns[j]) {
+        protectionInColumn = true;
+        break;
+      }
+    }
+    if (!protectionInColumn)
+      continue;
+
+    let protectionsRange = protections[i].getRange().getA1Notation();
+    let protectionsRangeFirstPart = protectionsRange.slice(0, 4);       // Example: From "A2:A1327" to "A2:A" without the "1327"
+    let newProtectionRange = protectionsRangeFirstPart + (totalInventoryItems).toString();
+    protections[i].setRange(inventory_sheet.getRange(newProtectionRange));
+  }
+  
+  // Update the checker cell
+  lastRecordedItemIndexRange.setValue(totalInventoryItems);
 }
 
 /*function addNewUserWithPermissions() {
@@ -110,7 +185,8 @@ function getActiveUserGSFunction() {
   return Session.getActiveUser().getEmail();
 }
 
-function getPermissionsListGSFunction(rowStart, colStart=1) {
+function getPermissionsListGSFunction(colStart=1) {
+  const rowStart = detech_code_sheet.getRange("C2").getValue();
   // Get the row and column range from cells A2 and B2
   const rowAndColRange = detech_code_sheet.getRange("A2:B2").getValues();
   // Calculate the end row and column numbers
@@ -120,40 +196,48 @@ function getPermissionsListGSFunction(rowStart, colStart=1) {
   const numRows = rowRangeEnd - rowStart + 1;
   const numCols = colRangeEnd - colStart + 1;
   // Return the data ranges values from the "Permissions" sheet
-  return permissions_sheet.getRange(rowStart, colStart, numRows, numCols).getValues();
+  return permissionsList = permissions_sheet.getRange(rowStart, colStart, numRows, numCols).getValues();
 }
 
-function addInventoryItem(item) {
+function addInventoryItem(item, activeUser) {
   try {
-    // Add new row with the proper setup
-    inventory_sheet.insertRowBefore(2);
-    inventory_sheet.getRange("A2").setFormula('=IF(B2 <> "", Row()-1, "")');
+    // Get the last row
+    let lastRow = detech_code_sheet.getRange("A6").getValue();
 
+    // Append a new row at the end of the inventory 
+    inventory_sheet.insertRowAfter(lastRow);
+
+    // Add the items data from the webpage to the columns in the "Inventory" sheet
     for (let i = 1; i < item.length; i++) {  // Skip the first element which is just the index of the item in the inventory dataset
-      let cellRange = intToLetter(i+1) + "2";
+      let cellRange = intToLetter(i+1) + (lastRow+1).toString();
       inventory_sheet.getRange(cellRange).setValue(item[i]);
     }
     return false;
   } catch (e) {
-    return e;
+    return e.message;
   }
 }
 
-function deleteInventoryRow(rowIndex) {
+function deleteInventoryRow(rowIndex, itemName) {
   try {
+    let currentItemName = inventory_sheet.getRange(rowIndex+1, 2).getValue();
+    if (currentItemName !== itemName)
+      return "The item may have been deleted or moved in the inventory. The dataset has been reloaded please try again";
+      
     // Archive the deleted row
     let row = inventory_sheet.getRange(rowIndex+1, 2, 1, inventory_sheet.getLastColumn()).getValues()[0];
-    deleted_archive_sheet.appendRow(row);
+    deleted_archive_sheet.insertRowBefore(2);
+    deleted_archive_sheet.getRange(2, 1, 1, row.length).setValues([row]);
   } catch (e) {
-    return e;
+    return e.message;
   }
 
   try {
-    // Delete the row in the inventory database
-    inventory_sheet.deleteRow(rowIndex+1);
+    // Delete the name of the item to flag the next trigger to delete the row
+    inventory_sheet.getRange(rowIndex+1, 2).setValue("");
     return false;
   } catch (e) {
-    return e;
+    return e.message;
   }
 
   // I probably dont need to split these try statements but I thought it might be extra safe
@@ -168,7 +252,7 @@ function updateInventoryFromWebpage(row, col, value, itemName) {
     inventory_sheet.getRange(row+1, col).setValue(value);
     return false; // Update successful
   } catch (e) {
-    return e;     // Update failed
+    return e.message;     // Update failed
   }
 }
 
@@ -191,6 +275,10 @@ function alert(msg) {
   SpreadsheetApp.getUi().alert(msg);
 }
 
+// Check if a string is a whole number
+function isWholeNumber(str) {
+  return !isNaN(str) && str.trim() !== "";
+}
 
 
 /*

@@ -299,7 +299,7 @@ SOLUTIONS:
 
       Syncing Solutions:
 
-1: Refresh the cache every 30 seconds or less
+1: Refresh the cache every 60 seconds or less
 2: When users are modifying anything with the inventory have the cache update. However do not delete the code that modifies the cache directly while it is being updated. This makes things feel fast even if its not.
 3: When a user modifies an item have it check if the item still exists. if it no longer exists then alert the user it has been deleted
 4: when a user deletes an item have it also check if the item still exists.

@@ -25,21 +25,24 @@
 
 <script>
 // Global dev variables
+const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const permissionsTypes = ["None", "Add", "Add & Delete", "Hidden", "Visible", "Edit"];
 const addItemsIgnoreColumns = [0, 2]; // Tell the addItemsContainer which columns to ignore for the user input boxes ["Index", "Date"]. The user does not need to input values for these columns when adding an item to the inventory. This is in reference to the inventoryColTitles array
 // Note: if you modify the columns in the permissions and inventory database sheets you may need to update this
 
 // These variables store information collected from functions in the .gs file
-var cachedInventoryData = null; // Inventory in google sheets saved as cache to the website to reduce load time
-var activeUser = null;          // The email of the user currently viewing the website
-var permissionsList = [];       // List of permissions the current user has
+var cachedInventoryData = null;         // Inventory in google sheets saved as cache to the website to reduce load time
+var outputTable = [];                   // This is the output table when the user querries the search
+var tableToOutputColumnTranslation = [] // This helps record which table columns are visible from the outputTable
+var activeUser = null;                  // The email of the user currently viewing the website
+var permissionsList = [];               // List of permissions the current user has
 
 // These arrays keep track of the cells position and information corresponding to the inventory sheet
 var inventoryColTitles = [];    // The name of the columns in the inventory aka the items attributes. Name, Location, Amount, etc...
-var resultCellRows = [];
-var resultCellCols = [];
 
 var waitForDataIntervalID;  // ID for the inverval that runs the "waitForData" function
+
+var preventTimedCacheReload = false; // Prevents the cache from reloading from the timed event. This is useful for when a user is modifying a cell they dont want it reload.
 
 
 // Force the enter keypress act the same as the "Search" button in the input box
@@ -62,7 +65,12 @@ function loadCacheAndSearch(requery=true) {
 }
 
 // Load the inventory from google sheets into a cache variable as a 2d array
-function loadInventoryToCache(requery=true) {
+function loadInventoryToCache(requery=true, reloadFromTime=false) {
+  // Prevent loading from timed interval if it is requested
+  if (reloadFromTime && preventTimedCacheReload)
+    return;
+  preventTimedCacheReload = false;  // Reset this if the check passed meaning that it was not from a timed interval
+  
   // Load the cache
   let cacheUpdated = false;
   google.script.run.withSuccessHandler(data => {cachedInventoryData = data; cacheUpdated = true;}).getCachedInventoryDataGSFunction();
@@ -91,7 +99,7 @@ function initialize() {
   // Get the entire inventory from the sheet and store it in the "cachedInventoryData" 2d array as cached data
   loadInventoryToCache(false);
   // Then set an interval to continually update this cached inventory data after some time has passed
-  setInterval(loadInventoryToCache, 60000);  // 60 second interval = 60,000 miliseconds
+  setInterval(() => {loadInventoryToCache(true, true)}, 60000);  // 60 second interval = 60,000 miliseconds
   // (I could not find a better way to get the variables from the .gs file so this is what I resorted to)
 
 
@@ -252,7 +260,7 @@ function addItem() {
         }
       }
       // Add the new element to the cache
-      item[0] = 1;  // Force the first column to 1 which indicates it is the first index in the inventory dataset
+      item[0] = cachedInventoryData.length; // Set the new items index to the end of the data
       cachedInventoryData.push(item); // Add the new item to the beginning of the cached data
       // Set the index of the newly pushed item
       cachedInventoryData[cachedInventoryData.length-1][0] = cachedInventoryData.length;
@@ -263,7 +271,7 @@ function addItem() {
 
     // Show the button again after its done loading
     document.getElementById("addItemButton").style.visibility = "visible";
-  }).addInventoryItem(item, activeUser);
+  }).addInventoryItem(item);
 }
 
 
@@ -287,8 +295,7 @@ function searchInventory() {
   } // Note: the short circuit nature of the || operation will NOT cause an error when attempting to retrieve the 0th index if the length is 0
 
   // Query the inventory data from cache and append each items row in a results array
-  let results = [];
-  resultCellRows = [];
+  outputTable = [];
   let lastIndex = -1;   // Avoid duplicating results by remembering the previous output index
   for (let i = 0; i < cachedInventoryData.length; i++) {
     let row = cachedInventoryData[i];
@@ -298,19 +305,28 @@ function searchInventory() {
     // Add the row if the search query matches any sub strings in the name or the search terms
     for (let j = 1; j < searchQuery.length; j++) {
       if (index !== lastIndex && (name.includes(searchQuery[j]) || searchTerms.includes(searchQuery[j]) || searchQuery[j] === '*')) {
-        results.push(row);
-        resultCellRows.push(i+1); // Store the row index of the cells displayed in the result
+        outputTable.push(row);
         lastIndex = index;
       }
     }
   }
+
+  // --------------------------------
+  // Order the results using its date
+  // --------------------------------
+  outputTable.sort((a, b) => {
+    const dateA = parseDate(a[2]);
+    const dateB = parseDate(b[2]);
+    return dateB - dateA; // Descending order
+  });
+
 
   // -------------------
   // Display the Results
   // -------------------
 
   let resultsDiv = document.getElementById("results");
-  if (results.length === 0) {
+  if (outputTable.length === 0) {
     resultsDiv.innerHTML = "No items found.";
     return;
   }
@@ -319,18 +335,20 @@ function searchInventory() {
   let html = '<table id="results_table" style="border-collapse: collapse; width: 100%;"><tr style="background-color: black; color: white;">';
 
   // Set the title row
+  tableToOutputColumnTranslation = [];
   if (permissionsList[1] === permissionsTypes[2]) // Permissions === "Add & Delete"
     html += '<th>&emsp;</th>';  // Delete feature buttons column header
   for (let i = 0; i < inventoryColTitles.length; i++) {
     let j = i+2;  // Corresponding index for the permissionsList to the inventoryColTitles arrays
     if (permissionsList[j] === permissionsTypes[4] || permissionsList[j] === permissionsTypes[5]) { // Permissions === "Visible" or "Edit"
       html += '<th>' + inventoryColTitles[i] + '</th>';
+      tableToOutputColumnTranslation.push(i);
     }
   }
   html += '</tr>';
   
   // Set each cell
-  for (let y = 0; y < results.length; y++) {
+  for (let y = 0; y < outputTable.length; y++) {
     html += '<tr>';
 
     // Add the delete buttons
@@ -339,22 +357,20 @@ function searchInventory() {
 
     // Set each cell depending on its permission level
     // And also add an alternating colour style to the cells background
-    for (let x = 0; x < results[y].length; x++) {
-      let i = x+2;  // Corresponding index for the permissionsList to the results[y] row
+    for (let x = 0; x < outputTable[y].length; x++) {
+      let i = x+2;  // Corresponding index for the permissionsList to the outputTable[y] row
       if (permissionsList[i] === permissionsTypes[4]) {               // Permissions === "Visible"
         if (y % 2 === 0)
-          html += '<td>' + results[y][x] + '</td>';
+          html += '<td>' + outputTable[y][x] + '</td>';
         else
-          html += '<td style="background-color: #e0e0e0;">' + results[y][x] + '</td>';
-        resultCellCols.push(x+1); // Store the column index of the cells that are visible
+          html += '<td style="background-color: #e0e0e0;">' + outputTable[y][x] + '</td>';
         
       } else if (permissionsList[i] === permissionsTypes[5]) {         // Permissions === "Edit"
         if (y % 2 === 0)
           html += '<td style="background-color: #e8e8ff;"';
         else
           html += '<td style="background-color: #d0d0ff;"';
-        html += ' contenteditable="true" onblur="handleCellEdit(event)" onkeydown="cellEditKeyDownHandle(event)">' + results[y][x] + '</td>';
-        resultCellCols.push(x+1); // Store the column index of the cells that are editable
+        html += ' contenteditable="true" onblur="handleCellEdit(event)" onkeydown="cellEditKeyDownHandle(event)">' + outputTable[y][x] + '</td>';
       }
     }
     html += '</tr>';
@@ -366,19 +382,20 @@ function searchInventory() {
 
 
 function deleteItem(tableRow) {
-  let result = confirm("Are you sure you want to delete this row in the Master Inventory Database?");
-  if (!result) return;  // User did not press OK
+  let askResult = confirm("Are you sure you want to delete this row in the Master Inventory Database?");
+  if (!askResult) return;  // User did not press OK
 
   // Hide all delete buttons while its loading
   let deleteButtons = document.getElementsByClassName("delete_button");
   for (let i = 0; i < deleteButtons.length; i++)
     deleteButtons[i].style.visibility = "hidden";
 
-  let rowIndex = resultCellRows[tableRow];
+  // Translate the positions to correspond to the inventory sheet rows and columns
+  const itemInventoryRow = outputTable[tableRow][0]+1;
 
   // Get the items name of the cell being modified from the cache
   // This will be checked in the inventory sheet to verify it is the correct item being modified
-  const itemName = cachedInventoryData[rowIndex-1][1];
+  const itemName = outputTable[tableRow][1];
 
   google.script.run.withSuccessHandler(function(deleteStatus) {
     if (deleteStatus) {
@@ -387,17 +404,18 @@ function deleteItem(tableRow) {
       loadInventoryToCache();
     } else {
       // Remove the row from the cached data
-      cachedInventoryData.splice(rowIndex-1, 1);
+      cachedInventoryData.splice(itemInventoryRow-2, 1);
       // Reset the indexes in the cached data
       for (let i = 0; i < cachedInventoryData.length; i++)
         cachedInventoryData[i][0] = i+1;
       // Requery the inventory which will show the removed row and also reset the delete buttons back
       searchInventory();
     }
-  }).deleteInventoryRow(rowIndex, itemName);
+  }).deleteInventoryRow(itemInventoryRow, itemName);
 }
 
 function cellEditKeyDownHandle(event) {
+    preventTimedCacheReload = true;
     if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault(); // Prevent inserting a newline in the cell
         event.target.blur();    // Move focus away from the cell to trigger blur event
@@ -405,6 +423,8 @@ function cellEditKeyDownHandle(event) {
 }
 
 function handleCellEdit(event) {
+  preventTimedCacheReload = false;  // Allow the timed interval cache reload to continue as normal when the user is done editing the cell
+
   // Get the new cells value
   const cell = event.target;
   const row = cell.parentElement;
@@ -417,12 +437,12 @@ function handleCellEdit(event) {
     colIndex -= 1;
 
   // Translate the positions to correspond to the inventory sheet rows and columns
-  rowIndex = resultCellRows[rowIndex-1];
-  colIndex = resultCellCols[colIndex];
+  let itemInventoryRow = outputTable[rowIndex-1][0]+1;
+  let itemInventoryCol = tableToOutputColumnTranslation[colIndex-1]+1+1;
 
   // Get the items name of the cell being modified from the cache
   // This will be checked in the inventory sheet to verify it is the correct item being modified
-  const itemName = cachedInventoryData[rowIndex-1][1];
+  const itemName = outputTable[rowIndex-1][1];
 
   // Update the inventory using the function in the .gs script
   google.script.run.withSuccessHandler(function(updateStatus) {
@@ -432,17 +452,31 @@ function handleCellEdit(event) {
       console.log(errorMessage);
       alert(errorMessage);
       loadInventoryToCache();
-    } else {  // If there wasn't an issue then update the existing cache
-      // The cache does get reloaded anyway but doing this first will help make things feel smoother
-      // If the user were to edit a cell and search right after, if the cell were to show up in the output it would not look to be changed
-      // By updating the existing cache before the reload it helps avoid this small issue
-      cachedInventoryData[rowIndex-1][colIndex-1] = cellValue;
     }
-  }).updateInventoryFromWebpage(rowIndex, colIndex, cellValue, itemName);
+  }).updateInventoryFromWebpage(itemInventoryRow, itemInventoryCol, cellValue, itemName);
 }
 
 
 
+
+function parseDate(dateString) {
+    try {
+      const splitDate = dateString.split(' ');
+      const year = parseInt(splitDate[1].split(',')[0]);
+      const monthName = splitDate[2];
+      const day = parseInt(splitDate[3]);
+      let month = 0;
+      for (let i = 0; i < monthNames.length; i++) {
+        if (monthName === monthNames[i]) {
+          month = i+1;
+          break;
+        }
+      }
+      return ( year*12 + month ) * 32 + day;  // *12 and *32 to convert years months and days as different "digits" in their own numbering system 
+    } catch (e) {
+      return 0;
+    }
+  }
 
 function getCurrentDateAndTime() {
   const now = new Date();

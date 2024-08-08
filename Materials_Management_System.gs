@@ -29,21 +29,47 @@ function onEdit(e) {
 }
 
 function updateInventorySheetPermissions(activeCellValue, activeColumn, activeRow, userEmail, alertUser=true) {
-  // Skip for the index column
+  // Skip for the index column, this column should never be editable
   if (activeColumn === 1)
     return;
   
-  // Ignore this function for these specific users. They will NOT have any editing permissions
+  // Ignore this function for these specific users. They will NOT have any editing permissions. This does not need to be changed
   if (userEmail === "Other Users")
     return;
   
-  // Ignore this function for these specific users. They will have FULL editing permissions
+  // Ignore this function for these specific users. They will have FULL editing permissions. This does not need to be changed
   if (userEmail === "detech@ualberta.ca" || userEmail === "degem@ualberta.ca" || userEmail === "desi1@ualberta.ca")
     return;
+
+  
+  let tempPermissions = permissions_sheet.getRange(activeRow, 4, activeRow, 1000).getValues().flat();
+  Logger.log(tempPermissions);
+  
+  // If a user is allowed to edit any value of an item then force the program to allow an edit permissions in the items "Date" column
+  if (activeColumn !== 3) {
+    if (activeCellValue === "Edit") { // If the current permissions setting is to allow for an edit then set the date column to edititable
+      updateInventorySheetPermissions("Edit", 3, activeRow, userEmail, false);
+    } else {  // Otherwise check if there are no other edits then remove the editiable permission of the date column
+      let noEdits = true;
+      for (let j = 0; j < tempPermissions.length; j++) {
+        if (tempPermissions[j] === "Edit") { // An edit was found
+          noEdits = false;
+          break;
+        } else if (tempPermissions[j] === "") {  // No edits were found an the end of the permissions has been reached
+          break;
+        }
+      }
+      if (noEdits) {
+        updateInventorySheetPermissions("Hidden", 3, activeRow, userEmail, false);
+      }
+    }
+  }
     
   const protections = inventory_sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
   for (let i = 0; i < protections.length; i++) {
     let protectionColumn = protections[i].getDescription();
+
+
     // If a user is allowed to delete an item then force the program to allow an edit permissions in the items "Name" column
     if (activeColumn === 0) {
       activeColumn = 2;
@@ -76,8 +102,8 @@ function updateInventorySheetPermissions(activeCellValue, activeColumn, activeRo
 
 function timeDrivenTriggerRemoveEmptyItemRows() {
   // Search all rows with empty item names which mean they are flagged for deletion
-  let lastRow = detech_code_sheet.getRange("A6").getValue();
-  let values = inventory_sheet.getRange(2, 2, lastRow - 1).getValues();
+  const lastItemRow = detech_code_sheet.getRange("A6").getValue();
+  let values = inventory_sheet.getRange(2, 2, lastItemRow - 1).getValues();
   let changeHappened = false;
    // Loop from the last row to the first row to avoid indexing issues after row deletion
   for (let y = values.length - 1; y >= 0; y--) {
@@ -86,8 +112,14 @@ function timeDrivenTriggerRemoveEmptyItemRows() {
       changeHappened = true;
     }
   }
-  if (changeHappened)
-    timeDrivenTriggerInventorySheetProtectionsUpdateFunction(true);
+
+  // Clear the remaining rows below the last item row
+  const lastRow = inventory_sheet.getLastRow();
+  const lastCol = inventory_sheet.getLastColumn();
+  inventory_sheet.getRange("A" + (lastItemRow+1) + ":" + intToLetter(lastCol) + lastRow).clear();
+
+  //if (changeHappened)
+    //timeDrivenTriggerInventorySheetProtectionsUpdateFunction(true);
 }
 
 
@@ -174,7 +206,7 @@ function getCachedInventoryDataGSFunction() {
   // Get the data range in the "Inventory" sheet starting from A2
   const startRow = 2;
   const startColumn = 1; // Column A
-  const numRows = totalInventoryItems; // Number of rows to include in the range
+  const numRows = totalInventoryItems-1; // Number of rows to include in the range
   const numColumns = totalColumns; // Number of columns to include in the range
   // Fetch the data as a 2D array
   return inventory_sheet.getRange(startRow, startColumn, numRows, numColumns).getValues();
@@ -199,11 +231,13 @@ function getPermissionsListGSFunction(colStart=1) {
   return permissionsList = permissions_sheet.getRange(rowStart, colStart, numRows, numCols).getValues();
 }
 
-function addInventoryItem(item, activeUser) {
+function addInventoryItem(item) {
   try {
+    // Set the items date to the current date
+    item[2] = getCurrentSemester();
+
     // Get the last row
     let lastRow = detech_code_sheet.getRange("A6").getValue();
-
     // Append a new row at the end of the inventory 
     inventory_sheet.insertRowAfter(lastRow);
 
@@ -220,12 +254,12 @@ function addInventoryItem(item, activeUser) {
 
 function deleteInventoryRow(rowIndex, itemName) {
   try {
-    let currentItemName = inventory_sheet.getRange(rowIndex+1, 2).getValue();
+    let currentItemName = inventory_sheet.getRange(rowIndex, 2).getValue();
     if (currentItemName !== itemName)
       return "The item may have been deleted or moved in the inventory. The dataset has been reloaded please try again";
       
     // Archive the deleted row
-    let row = inventory_sheet.getRange(rowIndex+1, 2, 1, inventory_sheet.getLastColumn()).getValues()[0];
+    let row = inventory_sheet.getRange(rowIndex, 2, 1, inventory_sheet.getLastColumn()).getValues()[0];
     deleted_archive_sheet.insertRowBefore(2);
     deleted_archive_sheet.getRange(2, 1, 1, row.length).setValues([row]);
   } catch (e) {
@@ -234,7 +268,7 @@ function deleteInventoryRow(rowIndex, itemName) {
 
   try {
     // Delete the name of the item to flag the next trigger to delete the row
-    inventory_sheet.getRange(rowIndex+1, 2).setValue("");
+    inventory_sheet.getRange(rowIndex, 2).setValue("");
     return false;
   } catch (e) {
     return e.message;
@@ -243,13 +277,18 @@ function deleteInventoryRow(rowIndex, itemName) {
   // I probably dont need to split these try statements but I thought it might be extra safe
 }
 
+// This function is used when a user adds changes to an items attribute in the website
 function updateInventoryFromWebpage(row, col, value, itemName) {
   try {
-    let currentItemName = inventory_sheet.getRange(row+1, 2).getValue();
+
+    let currentItemName = inventory_sheet.getRange(row, 2).getValue();
     if (currentItemName !== itemName)
       return "The item may have been deleted or moved in the inventory. The dataset has been reloaded please try again";
 
-    inventory_sheet.getRange(row+1, col).setValue(value);
+    // Update the items cell
+    inventory_sheet.getRange(row, col).setValue(value);
+    // Set the date that it was changed
+    inventory_sheet.getRange(row, 3).setValue(getCurrentSemester());
     return false; // Update successful
   } catch (e) {
     return e.message;     // Update failed
@@ -280,13 +319,31 @@ function isWholeNumber(str) {
   return !isNaN(str) && str.trim() !== "";
 }
 
+function getCurrentSemester() {
+  const date = new Date();
+  const day = date.getDate();
+  const month = date.getMonth()+1;
+  const year = date.getFullYear();
+
+  let semester = "";
+  if (month >= 1 && month <= 4) {
+    semester = "Winter";
+  } else if (month >= 5 && month <= 8) {
+    semester = "Summer";
+  } else if (month >= 9 && month <= 12) {
+    semester = "Fall";
+  }
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return semester + " " + year + ", " + monthNames[month-1] + " " + day;
+}
+
 
 /*
 
 
 POTENTIAL ISSUES:
 
-There is this huge issue where if a user manually adds or deletes an item in the inventory. since the cache is only updated every 1 minute this could have serious issues if a user were to try modifiying items in a wrong row.
+There is this huge issue where if a user manually adds or deletes an item in the inventory. since the cache is only updated every 60 seconds this could have serious issues if a user were to try modifiying items in an incorrect or misplaced row.
 
       Syncing Issues:
 
